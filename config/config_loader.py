@@ -43,10 +43,13 @@ class Config:
         # 如果 conf 里没有这个参数，这里会直接抛出清晰的异常，不会污染其他参数
         return self.parser.get('agent', 'MODEL', fallback='qwen-plus')
 
-
     def get_max_iteration(self) -> int:
         # 如果 conf 里没有这个参数，这里会直接抛出清晰的异常，不会污染其他参数
         return self.parser.getint('agent', 'MAX_ITERATION', fallback=10)
+
+    def get_max_history(self) -> int:
+        # 如果 conf 里没有这个参数，这里会直接抛出清晰的异常，不会污染其他参数
+        return self.parser.getint('agent', 'MAX_HISTORY', fallback=20)
 
     def get_system_prompt(self) -> str:
         return self._read_prompt("system_prompt.md")
