@@ -4,7 +4,7 @@
 项目源自一份 10 天 AI 应用开发学习计划（见文末学习路线），目标是**学习与实践兼顾**：
 每一天产出一个可运行的机制，最终演进为带长期记忆的多 Agent 系统。
 
-> 当前进度：Phase 1 核心机制完成（Day 0-3），Day 4 打磨中。
+> 当前进度：Phase 1 完成（Day 0-4）：ReAct 循环、反思机制、错误处理闭环、表达式计算、滑动窗口上下文管理。
 
 ---
 
@@ -18,6 +18,9 @@
 - **模块化架构**：入口 / 核心循环 / 工具 / 配置 / prompt 五层分离，依赖单向无循环
 - **prompt 热更新**：prompt 存为独立文本文件，修改后无需重启程序，下一轮对话自动生效
 - **rich 美化输出**：四色轨迹标签 + Panel 分轮分组 + Markdown 渲染最终回答
+- **防御式工具执行**：任何工具异常（畸形 JSON / 参数不匹配 / 执行失败）转化为错误字符串喂回模型，模型自救重试，救不了才带诊断上报用户（优雅降级）
+- **安全表达式计算**：calculate 支持任意数学表达式，AST 节点白名单 + 空 builtins 双层防护，语法层拒绝注入类表达式
+- **滑动窗口上下文管理**：history 仅保留最近 N 条消息，防止长会话撞上下文窗口上限
 
 ---
 
@@ -64,7 +67,8 @@ ai_agent/
 │   ├── chat.py              # 核心层：ReAct 主循环 + 轨迹收集与渲染
 │   └── reflect.py           # 核心层：反思调用（无工具的独立 API 请求）
 ├── tools/
-│   └── tool_functions.py    # 能力层：工具函数实现 + JSON Schema + 名字→函数注册表
+│   ├── tool_functions.py    # 能力层：工具函数实现 + JSON Schema + 名字→函数注册表
+│   └── tool_executor.py     # 能力层：统一工具执行入口（异常→错误字符串兜底）
 ├── config/
 │   ├── config_loader.py     # 配置层：Config 类 + 全局单例 agent_config
 │   └── config.conf          # 短配置值：模型名、最大迭代次数
@@ -138,7 +142,7 @@ main → src.chat → { src.reflect, src.client, tools, config }
 | 工具名 | 参数 | 用途 |
 |--------|------|------|
 | `get_current_time` | 无 | 获取当前时间（`%Y-%m-%d %H:%M:%S`） |
-| `calculate` | `a`, `b`（number） | 两数求和（Day 4 计划升级为表达式计算） |
+| `calculate` | `expression`（string） | 数学表达式计算（`+ - * / // % **` 及 abs/round/min/max/pow），AST 白名单安全求值 |
 | `read_file` | `filepath`（string） | 读取文本文件，不存在时返回友好错误信息 |
 
 工具扩展方式：在 `tools/tool_functions.py` 中新增函数 → 同步新增 schema →
@@ -153,6 +157,7 @@ main → src.chat → { src.reflect, src.client, tools, config }
 | `DASHSCOPE_API_KEY` | 环境变量 | API 密钥，**严禁硬编码或提交进 git** |
 | `MODEL` | config/config.conf | 模型名，默认 qwen-plus |
 | `MAX_ITERATION` | config/config.conf | 工具循环上限，默认 10 |
+| `MAX_HISTORY` | config/config.conf | 滑动窗口上限，保留最近 N 条消息，默认 20 |
 | system / reflection prompt | prompts/*.md | 纯文本热更新，改完无需重启 |
 
 ---
@@ -165,7 +170,7 @@ main → src.chat → { src.reflect, src.client, tools, config }
 | | Day 1 | LLM 基础 + 多轮对话脚本 | ✅ |
 | | Day 2 | Function Calling 机制 + 三工具实现 | ✅ |
 | | Day 3 | ReAct 循环 + 显式 Thought + 反思机制 | ✅ |
-| | Day 4 | 错误处理 + 上下文管理 + 项目打磨 | 🔄 进行中 |
+| | Day 4 | 错误处理 + 上下文管理 + 项目打磨 | ✅ |
 | Phase 2 | Day 5-7 | 长期记忆系统（ChromaDB 向量检索） | ⬜ |
 | | Day 8-10 | 记忆修正与遗忘 + 多 Agent 协作 | ⬜ |
 
@@ -188,19 +193,23 @@ main → src.chat → { src.reflect, src.client, tools, config }
 - rich 方括号冲突：模型输出含 `[...]` 被当样式标记 → 动态内容一律 `escape()`
 - rich 自动高亮：日期/数字被 ReprHighlighter 意外上色 → `Console(highlight=False)`
 - rich 静默降级：IDE 运行窗口无色彩 → 终端能力检测问题，用 `console.is_terminal` 排查
+- 切片方向反了：`history[:N]` 保留最旧 N 条、扔掉最新对话，记忆策略静默失效 → 滑动窗口必须用 `history[-N:]`；症状指纹：模型连续多轮回答同一个陈旧时间戳
+- `git add -A` 前未创建 `.gitignore` → `.venv/` 数千文件入库 → `git rm -r --cached .` 后按 .gitignore 重新 add 并 `--amend` 修复；.gitignore 只过滤未跟踪文件，对已入库文件无效
 
 **认知层**
 - 模型心算 vs 调工具的取舍由工具 schema 的能力边界决定：工具不匹配时模型会"该调不调"
 - prompt 对错别字有容错，但复杂指令的错别字会悄悄改变理解且不报错——prompt 是合同文本
+- 模型不会暴露坏上下文：上下文陈旧或缺失时它仍基于旧信息自信回答（三轮相同时间戳事件）→ 任何 LLM 应用出现"回答停留在过去状态"，第一反应查上下文组装
+- eval 安全：清空 `__builtins__` 仍可被属性链（`''.__class__...`）绕过，AST 节点白名单才是可靠防线；任何函数调用必经 Name 节点引用，故 Name 白名单可间接封死调用面
 
 ---
 
 ## 已知风险与 TODO
 
 - [ ] `read_file` 无路径白名单：模型可读取用户目录下任意文件（本地学习工具可接受，生产化前必须加白名单）
-- [ ] 工具执行无 `try/except`：畸形 JSON 参数 / 函数异常会导致程序崩溃（Day 4）
-- [ ] history 无上限：长会话将撞上下文窗口（Day 4 实现滑动窗口截断）
-- [ ] `calculate` 仅支持两数相加（Day 4 升级为白名单 eval 表达式计算）
+- [x] 工具执行异常兜底：畸形 JSON / 参数不匹配 / 执行失败统一转错误字符串喂回模型（Day 4 完成）
+- [x] history 滑动窗口截断，MAX_HISTORY=20（Day 4 完成）
+- [x] `calculate` 升级为 AST 白名单安全表达式计算（Day 4 完成）
 - [ ] `chat.py` 循环逻辑与终端渲染耦合（Phase 2 前拆分出 ui 层）
 - [ ] Phase 2：ChromaDB 长期记忆、记忆修正与遗忘、多 Agent 协作
 

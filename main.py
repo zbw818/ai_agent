@@ -2,6 +2,7 @@ from rich.markdown import Markdown
 from rich.console import Console
 from rich.panel import Panel
 
+from config import agent_config
 from src.chat import chat
 
 
@@ -28,6 +29,8 @@ def main():
 		reply = chat(user_input, history)
 		history.append({"role": "user", "content": user_input})
 		history.append({"role": "assistant", "content": reply})
+
+		history[:] = history[agent_config.get_max_history():]
 
 		# # console.print()默认在输出末尾追加换行符, end = ""把结尾字符改成空串——不换行
 		# console.print("[bold blue]助手[/bold blue]：", end ="")
